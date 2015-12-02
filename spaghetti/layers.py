@@ -11,7 +11,7 @@ import theano.tensor as tt
 import numpy as np
 
 
-class ViterbiLayer(lnn.layers.MergeLayer):
+class CrfLayer(lnn.layers.MergeLayer):
     """
     spaghetti.layers.ViterbiLayer(incoming, pi, c, A, W, mask_input=None,
     **kwargs)
@@ -21,19 +21,20 @@ class ViterbiLayer(lnn.layers.MergeLayer):
     TODO: describe parameters
     """
 
-    def __init__(self, incoming, num_states, pi, c, A, W,
+    def __init__(self, incoming, num_states, pi, tau, c, A, W,
                  mask_input=None, **kwargs):
 
         incomings = [incoming]
         if mask_input is not None:
             incomings.append(mask_input)
 
-        super(ViterbiLayer, self).__init__(incomings, **kwargs)
+        super(CrfLayer, self).__init__(incomings, **kwargs)
 
         self.num_states = num_states
         num_inputs = int(np.prod(self.input_shapes[0][2:]))
 
         self.pi = self.add_param(pi, (num_states,), name='pi')
+        self.tau = self.add_param(tau, (num_states,), name='tau')
         self.c = self.add_param(c, (num_states,), name='c')
         self.A = self.add_param(A, (num_states, num_states), name='A')
         self.W = self.add_param(W, (num_inputs, num_states), name='W')
@@ -44,22 +45,7 @@ class ViterbiLayer(lnn.layers.MergeLayer):
         input_shape = input_shapes[0]
         return input_shape[0], input_shape[1]
 
-    def get_output_for(self, inputs, **kwargs):
-
-        # Retrieve the layer input
-        input = inputs[0]
-        # Retrieve the mask when it is supplied
-        mask = inputs[1] if len(inputs) > 1 else None
-
-        # Treat all dimensions after the second as flattened feature dimensions
-        if input.ndim > 3:
-            input = tt.flatten(input, 3)
-
-        # Input should be provided as (n_batch, n_time_steps, n_features)
-        # but scan requires the iterable dimension to be first
-        # So, we need to dimshuffle to (n_time_steps, n_batch, n_features)
-        input = input.dimshuffle(1, 0, 2)
-        seq_len, num_batches, _ = input.shape
+    def _get_viterbi_output_for(self, sequences, num_batches):
 
         def vit_step(x_i, delta_p, A, W, c):
             all_trans = A + tt.shape_padright(delta_p)
@@ -67,14 +53,11 @@ class ViterbiLayer(lnn.layers.MergeLayer):
             best_trans_id = tt.argmax(all_trans, axis=1)
             return c.T + x_i.dot(W) + best_trans, best_trans_id
 
-        if mask is not None:
-            mask = mask.dimshuffle(1, 0, 'x')
-            sequences = [input, mask]
+        if isinstance(sequences, list):
+            # TODO: Implement masked input with Viterbi algorithm
             raise NotImplementedError('Viterbi for masked input does not exist'
                                       ' yet')
-            step_fun = step_masked
         else:
-            sequences = input
             step_fun = vit_step
 
         ([deltas, back_ptrs], _) = theano.scan(
@@ -108,5 +91,59 @@ class ViterbiLayer(lnn.layers.MergeLayer):
         y_star = tt.concatenate([y_star[::-1],
                                  tt.shape_padleft(deltas[-1].argmax(axis=1))
                                  ]).T
-
         return y_star
+
+    def _get_forward_output_for(self, sequences, num_batches):
+
+        def fwd_step(x_i, alpha_p, Z_p, A, W, c):
+            f = tt.exp(c.T + x_i.dot(W)) * alpha_p.dot(tt.exp(A))
+            return f / tt.shape_padright(f.sum(axis=1)), Z_p + tt.log(f.sum(axis=1))
+
+        ([alphas, log_zs], upd) = theano.scan(
+            fn=fwd_step,
+            outputs_info=[tt.repeat(tt.shape_padleft(self.pi),
+                                    num_batches, axis=0),
+                          tt.repeat(tt.zeros(1), num_batches)],
+                          # tt.zeros(num_batches)],
+            sequences=sequences,
+            non_sequences=[self.A, self.W, self.c],
+            strict=True)
+
+        # add alpha_0
+        alphas = tt.concatenate(
+            [tt.shape_padleft(tt.repeat(tt.shape_padleft(self.pi),
+                                        num_batches, axis=0)),
+             alphas])
+
+        alphas = alphas.dimshuffle(1, 0, 2)
+
+        # log partition function
+        log_zs = log_zs[-1]
+
+        return alphas, log_zs
+
+    def get_output_for(self, inputs, mode='viterbi', **kwargs):
+        # Retrieve the layer input
+        input = inputs[0]
+        # Retrieve the mask when it is supplied
+        mask = inputs[1] if len(inputs) > 1 else None
+
+        # Treat all dimensions after the second as flattened feature dimensions
+        if input.ndim > 3:
+            input = tt.flatten(input, 3)
+
+        # Input should be provided as (n_batch, n_time_steps, n_features)
+        # but scan requires the iterable dimension to be first
+        # So, we need to dimshuffle to (n_time_steps, n_batch, n_features)
+        input = input.dimshuffle(1, 0, 2)
+        seq_len, num_batches, _ = input.shape
+        sequences = [input, mask] if mask is not None else input
+
+        if mode == 'viterbi':
+            return self._get_viterbi_output_for(sequences, num_batches)
+        elif mode == 'forward':
+            return self._get_forward_output_for(sequences, num_batches)[0]
+        elif mode == 'partition':
+            return self._get_forward_output_for(sequences, num_batches)[1]
+        else:
+            raise NotImplementedError('Invalid mode "%s"'.format(mode))
