@@ -60,20 +60,24 @@ class CrfLayer(lnn.layers.MergeLayer):
         else:
             step_fun = vit_step
 
+        delta_0 = \
+            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0) \
+            + sequences[0].dot(self.W)
+
         ([deltas, back_ptrs], _) = theano.scan(
             fn=step_fun,
-            sequences=sequences,
-            outputs_info=[tt.repeat(tt.shape_padleft(tt.log(self.pi)),
-                                    num_batches, axis=0),
-                          None],
+            sequences=sequences[1:],  # x_0 is already considered in delta_0
+            outputs_info=[delta_0, None],
             non_sequences=[self.A, self.W, self.c],
             strict=True)
 
-        # add delta_0
-        deltas = tt.concatenate(
-            [tt.shape_padleft(tt.repeat(tt.shape_padleft(tt.log(self.pi)),
-                                        num_batches, axis=0)),
-             deltas])
+        deltas_N = deltas[-1] +\
+            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0)
+
+        # add delta_0 and deltas_N
+        deltas = tt.concatenate([tt.shape_padleft(delta_0),
+                                 deltas[:-1],
+                                 tt.shape_padleft(deltas_N)])
 
         def bcktr_step(back_ptrs, next_state, num_batches):
             return back_ptrs[tt.arange(num_batches), next_state]
@@ -94,33 +98,44 @@ class CrfLayer(lnn.layers.MergeLayer):
         return y_star
 
     def _get_forward_output_for(self, sequences, num_batches):
+        # here we assume that sequences is just containing the observations
+        # TODO: take care of masked input
 
         def fwd_step(x_i, alpha_p, Z_p, A, W, c):
             f = tt.exp(c.T + x_i.dot(W)) * alpha_p.dot(tt.exp(A))
-            return f / tt.shape_padright(f.sum(axis=1)), Z_p + tt.log(f.sum(axis=1))
+            return (f / tt.shape_padright(f.sum(axis=1)),
+                    Z_p + tt.log(f.sum(axis=1)))
+
+        alpha_0 = tt.exp(
+            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0) +
+            sequences[0].dot(self.W))
+
+        Z_0 = tt.log(alpha_0.sum(axis=1))
+        alpha_0 /= tt.shape_padright(alpha_0.sum(axis=1))
 
         ([alphas, log_zs], upd) = theano.scan(
             fn=fwd_step,
-            outputs_info=[tt.repeat(tt.shape_padleft(self.pi),
-                                    num_batches, axis=0),
-                          tt.repeat(tt.zeros(1), num_batches)],
-                          # tt.zeros(num_batches)],
-            sequences=sequences,
+            outputs_info=[alpha_0, Z_0],
+            sequences=sequences[1:-1],  # we used x_0 already for alpha_0,
+                                        # and the last step will be calculated
+                                        # outside of the loop
             non_sequences=[self.A, self.W, self.c],
             strict=True)
 
-        # add alpha_0
-        alphas = tt.concatenate(
-            [tt.shape_padleft(tt.repeat(tt.shape_padleft(self.pi),
-                                        num_batches, axis=0)),
-             alphas])
+        alpha_N = tt.exp(self.c.T + sequences[-1].dot(self.W) + self.tau.T) *\
+            alphas[-1].dot(tt.exp(self.A))
 
+        log_z = log_zs[-1] + tt.log(alpha_N.sum(axis=1))
+
+        alpha_N /= tt.shape_padright(alpha_N.sum(axis=1))
+
+        # add alpha_0 and alpha_N
+        alphas = tt.concatenate([tt.shape_padleft(alpha_0),
+                                 alphas,
+                                 tt.shape_padright(alpha_N)])
         alphas = alphas.dimshuffle(1, 0, 2)
 
-        # log partition function
-        log_zs = log_zs[-1]
-
-        return alphas, log_zs
+        return alphas, log_z
 
     def get_output_for(self, inputs, mode='viterbi', **kwargs):
         # Retrieve the layer input
