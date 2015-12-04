@@ -115,3 +115,10 @@ crashlytics.properties
 crashlytics-build.properties
 fabric.properties
 
+
+# Created by https://www.gitignore.io/api/ipythonnotebook
+
+### IPythonNotebook ###
+# Temporary data
+.ipynb_checkpoints/
+
