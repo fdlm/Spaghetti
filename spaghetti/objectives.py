@@ -1,4 +1,3 @@
-import theano.tensor as tt
 import theano
 import lasagne as lnn
 
@@ -9,6 +8,7 @@ def neg_log_likelihood(crf, target):
     log_z = crf.get_output_for([x], mode='partition')
     x = x.dimshuffle(1, 0, 2)
 
+    # noinspection PyPep8Naming
     def seq_step(y_prev, y_cur, x_cur, lp, A, W, c):
         return lp + c.dot(y_cur.T) + (y_prev.dot(A) * y_cur).sum(axis=1) + \
                (x_cur.dot(W) * y_cur).sum(axis=1)
