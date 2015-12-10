@@ -46,7 +46,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         input_shape = input_shapes[0]
         return input_shape[0], input_shape[1]
 
-    def _get_viterbi_output_for(self, sequences, num_batches):
+    def _get_viterbi_output_for(self, sequences, num_batches, seq_len):
 
         def vit_step(x_i, delta_p, A, W, c):
             all_trans = A + tt.shape_padright(delta_p)
@@ -54,31 +54,41 @@ class CrfLayer(lnn.layers.MergeLayer):
             best_trans_id = tt.argmax(all_trans, axis=1)
             return c.T + x_i.dot(W) + best_trans, best_trans_id
 
-        if isinstance(sequences, list):
-            # TODO: Implement masked input with Viterbi algorithm
-            raise NotImplementedError('Viterbi for masked input does not exist'
-                                      ' yet')
-        else:
+        def vit_step_masked(x_i, mask_i, delta_p, A, W, c, masked_bck_ptrs):
+            all_trans = A + tt.shape_padright(delta_p)
+            best_trans = tt.max(all_trans, axis=1)
+            best_trans_id = tt.argmax(all_trans, axis=1)
+            delta_c = c.T + x_i.dot(W) + best_trans
+
+            return (delta_c * mask_i + delta_p * (1 - mask_i),
+                    tt.cast(best_trans_id * mask_i[0] +
+                            masked_bck_ptrs * (1 - mask_i[0]), dtype='int64'))
+
+        # prepare initial values
+        delta_0 = tt.repeat(tt.shape_padleft(self.pi), num_batches, axis=0)
+
+        # choose step function
+        if len(sequences) == 1:
             step_fun = vit_step
+            non_sequences = [self.A, self.W, self.c]
+        else:
+            step_fun = vit_step_masked
+            # We need backtracking pointers for masked steps. They just point
+            # to the state itself, effectively just copying the decoded step
+            non_sequences = [self.A, self.W, self.c,
+                             tt.shape_padleft(tt.arange(0, self.num_states,
+                                                        dtype='int64'))]
 
-        delta_0 = \
-            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0) \
-            + sequences[0].dot(self.W)
-
+        # loop over the observation sequence
         ([deltas, back_ptrs], _) = theano.scan(
             fn=step_fun,
-            sequences=sequences[1:],  # x_0 is already considered in delta_0
             outputs_info=[delta_0, None],
-            non_sequences=[self.A, self.W, self.c],
+            sequences=sequences,
+            non_sequences=non_sequences,
             strict=True)
 
-        deltas_N = deltas[-1] +\
-            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0)
-
-        # add delta_0 and deltas_N
-        deltas = tt.concatenate([tt.shape_padleft(delta_0),
-                                 deltas[:-1],
-                                 tt.shape_padleft(deltas_N)])
+        # don't forget tau for the last step
+        deltas_N = deltas[-1] + self.tau
 
         # noinspection PyShadowingNames
         def bcktr_step(back_ptrs, next_state, num_batches):
@@ -87,7 +97,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         # y_star is the most probable state sequence
         y_star, _ = theano.scan(
             fn=bcktr_step,
-            outputs_info=deltas[-1].argmax(axis=1),
+            outputs_info=deltas_N.argmax(axis=1),
             sequences=back_ptrs,
             non_sequences=[num_batches],
             go_backwards=True,
@@ -99,73 +109,75 @@ class CrfLayer(lnn.layers.MergeLayer):
                                  ]).T
         return y_star
 
-    def _get_forward_output_for(self, sequences, num_batches):
+    def _get_forward_output_for(self, sequences, num_batches, seq_len):
 
+        # define loop functions for theano scan, one for unmasked input,
+        # one for masked input
         def fwd_step(x_i, alpha_p, Z_p, A, W, c):
-            f = tt.exp(c.T + x_i.dot(W)) * alpha_p.dot(tt.exp(A))
-            return (f / tt.shape_padright(f.sum(axis=1)),
-                    Z_p + tt.log(f.sum(axis=1)))
+            alpha_c = tt.exp(c.T + x_i.dot(W)) * alpha_p.dot(tt.exp(A))
+            return (alpha_c / tt.shape_padright(alpha_c.sum(axis=1)),
+                    Z_p + tt.log(alpha_c.sum(axis=1)))
 
-        if isinstance(sequences, list):
-            # TODO: Implement masked input with Viterbi algorithm
-            raise NotImplementedError('Forward for masked input does not exist'
-                                      ' yet')
-        else:
-            step_fun = fwd_step
+        def fwd_step_masked(x_i, mask_i, alpha_p, Z_p, A, W, c):
+            alpha_c = tt.exp(c.T + x_i.dot(W)) * alpha_p.dot(tt.exp(A))
+            norm = alpha_c.sum(axis=1)
+            alpha_c /= tt.shape_padright(norm)
 
-        alpha_0 = tt.exp(
-            tt.repeat(tt.shape_padleft(self.pi + self.c), num_batches, axis=0) +
-            sequences[0].dot(self.W))
+            # use mask_i[0] here so Z_p will not get blown up to 2 dimensions
+            return (alpha_c * mask_i + alpha_p * (1 - mask_i),
+                    Z_p + tt.log(norm) * mask_i[0])
 
+        # prepare initial values
+        alpha_0 = tt.repeat(tt.shape_padleft(tt.exp(self.pi)),
+                            num_batches, axis=0)
         Z_0 = tt.log(alpha_0.sum(axis=1))
         alpha_0 /= tt.shape_padright(alpha_0.sum(axis=1))
 
+        # loop over the observation sequence
         ([alphas, log_zs], upd) = theano.scan(
-            fn=step_fun,
+            fn=fwd_step if len(sequences) == 1 else fwd_step_masked,
             outputs_info=[alpha_0, Z_0],
-            sequences=sequences[1:-1],  # we used x_0 already for alpha_0,
-                                        # and the last step will be calculated
-                                        # outside of the loop
+            sequences=sequences,
             non_sequences=[self.A, self.W, self.c],
             strict=True)
 
-        alpha_N = tt.exp(self.c.T + sequences[-1].dot(self.W) + self.tau.T) *\
-            alphas[-1].dot(tt.exp(self.A))
+        # don't forget tau for the last step, recopute the log probability
+        alphas_N = alphas[-1] * tt.exp(self.tau)
+        log_z = log_zs[-1] + tt.log(alphas_N.sum(axis=1))
 
-        log_z = log_zs[-1] + tt.log(alpha_N.sum(axis=1))
-
-        alpha_N /= tt.shape_padright(alpha_N.sum(axis=1))
-
-        # add alpha_0 and alpha_N
+        # add alpha_0 and corrected alpha_N
         alphas = tt.concatenate([tt.shape_padleft(alpha_0),
-                                 alphas,
-                                 tt.shape_padright(alpha_N)])
-        alphas = alphas.dimshuffle(1, 0, 2)
+                                 alphas[:-1],
+                                 tt.shape_padleft(alphas_N)])
 
+        # bring to (num_batches, seq_len, features) shape and return
+        alphas = alphas.dimshuffle(1, 0, 2)
         return alphas, log_z
 
     def get_output_for(self, inputs, mode='viterbi', **kwargs):
         # Retrieve the layer input
         data = inputs[0]
-        # Retrieve the mask when it is supplied
-        mask = inputs[1] if len(inputs) > 1 else None
-
         # Treat all dimensions after the second as flattened feature dimensions
         if data.ndim > 3:
             data = tt.flatten(data, 3)
-
         # Input should be provided as (n_batch, n_time_steps, n_features)
         # but scan requires the iterable dimension to be first
         # So, we need to dimshuffle to (n_time_steps, n_batch, n_features)
         data = data.dimshuffle(1, 0, 2)
         seq_len, num_batches, _ = data.shape
-        sequences = [data, mask] if mask is not None else data
+        sequences = [data]
+
+        # Retrieve the mask when it is supplied
+        if len(inputs) > 1:
+            mask = inputs[1]
+            mask = mask.dimshuffle(1, 0, 'x')
+            sequences.append(mask)
 
         if mode == 'viterbi':
-            return self._get_viterbi_output_for(sequences, num_batches)
+            return self._get_viterbi_output_for(sequences, num_batches, seq_len)
         elif mode == 'forward':
-            return self._get_forward_output_for(sequences, num_batches)[0]
+            return self._get_forward_output_for(sequences, num_batches, seq_len)[0]
         elif mode == 'partition':
-            return self._get_forward_output_for(sequences, num_batches)[1]
+            return self._get_forward_output_for(sequences, num_batches, seq_len)[1]
         else:
             raise NotImplementedError('Invalid mode "%s"'.format(mode))
