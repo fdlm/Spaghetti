@@ -46,7 +46,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         input_shape = input_shapes[0]
         return input_shape[0], input_shape[1]
 
-    def _get_viterbi_output_for(self, sequences, num_batches, seq_len):
+    def _get_viterbi_output_for(self, sequences, num_batches):
 
         def vit_step(x_i, delta_p, A, W, c):
             all_trans = A + tt.shape_padright(delta_p)
@@ -109,7 +109,7 @@ class CrfLayer(lnn.layers.MergeLayer):
                                  ]).T
         return y_star
 
-    def _get_forward_output_for(self, sequences, num_batches, seq_len):
+    def _get_forward_output_for(self, sequences, num_batches):
 
         # define loop functions for theano scan, one for unmasked input,
         # one for masked input
@@ -174,10 +174,10 @@ class CrfLayer(lnn.layers.MergeLayer):
             sequences.append(mask)
 
         if mode == 'viterbi':
-            return self._get_viterbi_output_for(sequences, num_batches, seq_len)
+            return self._get_viterbi_output_for(sequences, num_batches)
         elif mode == 'forward':
-            return self._get_forward_output_for(sequences, num_batches, seq_len)[0]
+            return self._get_forward_output_for(sequences, num_batches)[0]
         elif mode == 'partition':
-            return self._get_forward_output_for(sequences, num_batches, seq_len)[1]
+            return self._get_forward_output_for(sequences, num_batches)[1]
         else:
             raise NotImplementedError('Invalid mode "%s"'.format(mode))
