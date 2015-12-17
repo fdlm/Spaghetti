@@ -17,12 +17,14 @@ class CrfLayer(lnn.layers.MergeLayer):
     spaghetti.layers.ViterbiLayer(incoming, pi, c, A, W, mask_input=None,
     **kwargs)
 
-    Conditional random field Viterbi layer
+    Conditional random field layer
 
     TODO: describe parameters
     """
 
-    def __init__(self, incoming, num_states, pi, tau, c, A, W,
+    def __init__(self, incoming, num_states, pi=lnn.init.Constant(0.),
+                 tau=lnn.init.Constant(0.), c=lnn.init.Constant(0.),
+                 A=lnn.init.GlorotUniform(), W=lnn.init.GlorotUniform(),
                  mask_input=None, **kwargs):
 
         incomings = [incoming]
