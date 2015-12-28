@@ -100,7 +100,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         y_star, _ = theano.scan(
             fn=bcktr_step,
             outputs_info=deltas_N.argmax(axis=1),
-            sequences=back_ptrs,
+            sequences=back_ptrs[1:],  # don't report the initial state y_0
             non_sequences=[num_batches],
             go_backwards=True,
             strict=True)
@@ -147,10 +147,8 @@ class CrfLayer(lnn.layers.MergeLayer):
         alphas_N = alphas[-1] * tt.exp(self.tau)
         log_z = log_zs[-1] + tt.log(alphas_N.sum(axis=1))
 
-        # add alpha_0 and corrected alpha_N
-        alphas = tt.concatenate([tt.shape_padleft(alpha_0),
-                                 alphas[:-1],
-                                 tt.shape_padleft(alphas_N)])
+        # add corrected alpha_N
+        alphas = tt.concatenate([alphas[:-1], tt.shape_padleft(alphas_N)])
 
         # bring to (num_batches, seq_len, features) shape and return
         alphas = alphas.dimshuffle(1, 0, 2)

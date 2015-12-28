@@ -1,5 +1,37 @@
 import theano
+import theano.tensor as tt
 import lasagne as lnn
+
+
+# this is taken from pylearn2 (https://github.com/lisa-lab/pylearn2)
+def _log_sum_exp(x=None, axis=None):
+    """
+    A numerically stable expression for
+    `T.log(T.exp(x).sum(axis=axis))`
+    Parameters
+    ----------
+    x : theano.gof.Variable
+        A tensor we want to compute the log sum exp of
+    axis : int, optional
+        Axis along which to sum
+    Returns
+    -------
+    log_sum_exp : theano.gof.Variable
+        The log sum exp of `A`
+    """
+    x_max = tt.max(x, axis=axis, keepdims=True)
+    y = (
+        tt.log(tt.sum(tt.exp(x - x_max), axis=axis, keepdims=True)) +
+        x_max
+    )
+
+    if axis is None:
+        return y.dimshuffle(())
+    else:
+        if type(axis) is int:
+            axis = [axis]
+        return y.dimshuffle([i for i in range(y.ndim) if
+                             i % y.ndim not in axis])
 
 
 def neg_log_likelihood(crf, target, mask=None):
@@ -26,14 +58,23 @@ def neg_log_likelihood(crf, target, mask=None):
     if mask:
         mask[0] = mask[0].dimshuffle(1, 0)
 
-    # assumes that for masked values, the last y value is repeated!
-    init_lp = y[0].dot(crf.pi) + y[-1].dot(crf.tau) - log_z
+    # sum out all possibilities of y_0
+    # assumes that:
+    #  - for masked values the last valid y value is repeated!
+    #  - assumes y_1 is never masked
+    # this should work in the most common case where you mask at the
+    # end of a sequence.
+    # tricky: y_1 corresponds to y[0], while y_0 is a
+    # non-existing 'virtual state'
+    init_lp = \
+        tt.log(tt.exp(crf.pi + crf.A.dot(y[0].T).T).sum(axis=1)) + \
+        y[0].dot(crf.c) + (x[0].dot(crf.W) * y[0]).sum(axis=1) + \
+        y[-1].dot(crf.tau) - log_z
 
     seq_lp, _ = theano.scan(
         fn=seq_step if not mask else seq_step_masked,
         outputs_info=init_lp,
-        # this starts with y_prev=y[0], y_cur=y[1]
-        sequences=[dict(input=y, taps=[-1, 0]), x] + mask,
+        sequences=[dict(input=y, taps=[-1, 0]), x[1:]] + mask,
         non_sequences=[crf.A, crf.W, crf.c])
 
     # negate log likelihood because we are minimizing
