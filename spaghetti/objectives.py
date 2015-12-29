@@ -69,7 +69,7 @@ def neg_log_likelihood(crf, target, mask=None):
     # tricky: y_1 corresponds to y[0], while y_0 is a
     # non-existing 'virtual state'
     init_lp = \
-        tt.log(tt.exp(crf.pi + crf.A.dot(y[0].T).T).sum(axis=1)) + \
+        _log_sum_exp(crf.pi + crf.A.dot(y[0].T).T, axis=1) + \
         y[0].dot(crf.c) + (x[0].dot(crf.W) * y[0]).sum(axis=1) + \
         y[-1].dot(crf.tau) - log_z
 
