@@ -35,8 +35,6 @@ def _log_sum_exp(x=None, axis=None):
 
 
 def neg_log_likelihood(crf, target, mask=None):
-    mask = [mask] if mask is not None else []
-
     # get output and compute partition function
     x = lnn.layers.get_output(crf.input_layers[0])
     log_z = lnn.layers.get_output(crf, mode='partition')
@@ -50,13 +48,17 @@ def neg_log_likelihood(crf, target, mask=None):
     def seq_step_masked(y_prev, y_cur, x_cur, mask_i, lp, A, W, c):
         lp_cur = c.dot(y_cur.T) + (y_prev.dot(A) * y_cur).sum(axis=1) + \
             (x_cur.dot(W) * y_cur).sum(axis=1)
-        return lp + lp_cur * mask_i
+        return lp + lp_cur * mask_i[0]
 
     # make time first dimension
     y = target.dimshuffle(1, 0, 2)
     x = x.dimshuffle(1, 0, 2)
-    if mask:
-        mask[0] = mask[0].dimshuffle(1, 0)
+
+    # create sequences - since we use x[0] already
+    # for computing the initial value, we start from x[1]
+    sequences = [dict(input=y, taps=[-1, 0]), x[1:]]
+    if mask is not None:
+        sequences.append(mask.dimshuffle(1, 0, 'x')[1:])
 
     # sum out all possibilities of y_0
     # assumes that:
@@ -71,10 +73,11 @@ def neg_log_likelihood(crf, target, mask=None):
         y[0].dot(crf.c) + (x[0].dot(crf.W) * y[0]).sum(axis=1) + \
         y[-1].dot(crf.tau) - log_z
 
+    # process the sequence
     seq_lp, _ = theano.scan(
-        fn=seq_step if not mask else seq_step_masked,
+        fn=seq_step if mask is None else seq_step_masked,
         outputs_info=init_lp,
-        sequences=[dict(input=y, taps=[-1, 0]), x[1:]] + mask,
+        sequences=sequences,
         non_sequences=[crf.A, crf.W, crf.c])
 
     # negate log likelihood because we are minimizing
