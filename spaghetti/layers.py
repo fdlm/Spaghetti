@@ -10,6 +10,8 @@ import theano
 import theano.tensor as tt
 import numpy as np
 
+STATE_ID_DTYPE = 'uint16'
+
 
 # noinspection PyPep8Naming
 class CrfLayer(lnn.layers.MergeLayer):
@@ -59,12 +61,14 @@ class CrfLayer(lnn.layers.MergeLayer):
         def vit_step_masked(x_i, mask_i, delta_p, A, W, c, masked_bck_ptrs):
             all_trans = A + tt.shape_padright(delta_p)
             best_trans = tt.max(all_trans, axis=1)
-            best_trans_id = tt.argmax(all_trans, axis=1)
+            best_trans_id = tt.cast(tt.argmax(all_trans, axis=1),
+                                    dtype=STATE_ID_DTYPE)
             delta_c = c.T + x_i.dot(W) + best_trans
 
             return (delta_c * mask_i + delta_p * (1 - mask_i),
                     tt.cast(best_trans_id * mask_i[0] +
-                            masked_bck_ptrs * (1 - mask_i[0]), dtype='int64'))
+                            masked_bck_ptrs * (1 - mask_i[0]),
+                            dtype=STATE_ID_DTYPE))
 
         # prepare initial values
         delta_0 = tt.repeat(tt.shape_padleft(self.pi), num_batches, axis=0)
@@ -79,7 +83,7 @@ class CrfLayer(lnn.layers.MergeLayer):
             # to the state itself, effectively just copying the decoded step
             non_sequences = [self.A, self.W, self.c,
                              tt.shape_padleft(tt.arange(0, self.num_states,
-                                                        dtype='int64'))]
+                                                        dtype=STATE_ID_DTYPE))]
 
         # loop over the observation sequence
         ([deltas, back_ptrs], _) = theano.scan(
@@ -99,7 +103,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         # y_star is the most probable state sequence
         y_star, _ = theano.scan(
             fn=bcktr_step,
-            outputs_info=deltas_N.argmax(axis=1),
+            outputs_info=tt.cast(deltas_N.argmax(axis=1), dtype=STATE_ID_DTYPE),
             sequences=back_ptrs[1:],  # don't report the initial state y_0
             non_sequences=[num_batches],
             go_backwards=True,
