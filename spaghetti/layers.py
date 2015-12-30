@@ -149,7 +149,9 @@ class CrfLayer(lnn.layers.MergeLayer):
 
         # don't forget tau for the last step, recopute the log probability
         alphas_N = alphas[-1] * tt.exp(self.tau)
-        log_z = log_zs[-1] + tt.log(alphas_N.sum(axis=1))
+        norm = alphas_N.sum(axis=1)
+        log_z = log_zs[-1] + tt.log(norm)
+        alphas_N /= tt.shape_padright(norm)
 
         # add corrected alpha_N
         alphas = tt.concatenate([alphas[:-1], tt.shape_padleft(alphas_N)])
