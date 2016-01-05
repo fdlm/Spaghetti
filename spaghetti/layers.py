@@ -66,8 +66,8 @@ class CrfLayer(lnn.layers.MergeLayer):
             delta_c = c.T + x_i.dot(W) + best_trans
 
             return (delta_c * mask_i + delta_p * (1 - mask_i),
-                    tt.cast(best_trans_id * mask_i[0] +
-                            masked_bck_ptrs * (1 - mask_i[0]),
+                    tt.cast(best_trans_id * mask_i +
+                            masked_bck_ptrs * (1 - mask_i),
                             dtype=STATE_ID_DTYPE))
 
         # prepare initial values
@@ -129,9 +129,9 @@ class CrfLayer(lnn.layers.MergeLayer):
             norm = alpha_c.sum(axis=1)
             alpha_c /= tt.shape_padright(norm)
 
-            # use mask_i[0] here so Z_p will not get blown up to 2 dimensions
+            # use .squeeze() to remove last broadcastable dimension
             return (alpha_c * mask_i + alpha_p * (1 - mask_i),
-                    Z_p + tt.log(norm) * mask_i[0])
+                    Z_p + tt.log(norm) * mask_i.squeeze())
 
         # prepare initial values
         alpha_0 = tt.repeat(tt.shape_padleft(tt.exp(self.pi)),

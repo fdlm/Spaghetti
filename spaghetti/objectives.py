@@ -48,8 +48,11 @@ def neg_log_likelihood(crf, target, mask=None):
     def seq_step_masked(y_prev, y_cur, x_cur, mask_i, lp, A, W, c):
         lp_cur = c.dot(y_cur.T) + (y_prev.dot(A) * y_cur).sum(axis=1) + \
             (x_cur.dot(W) * y_cur).sum(axis=1)
-        return lp + lp_cur * mask_i[0]
+        return lp + lp_cur * mask_i
 
+    # treat all dimensions after the second as flattened feature dimensions
+    if x.ndim > 3:
+        x = tt.flatten(x, 3)
     # make time first dimension
     y = target.dimshuffle(1, 0, 2)
     x = x.dimshuffle(1, 0, 2)
@@ -58,7 +61,9 @@ def neg_log_likelihood(crf, target, mask=None):
     # for computing the initial value, we start from x[1]
     sequences = [dict(input=y, taps=[-1, 0]), x[1:]]
     if mask is not None:
-        sequences.append(mask.dimshuffle(1, 0, 'x')[1:])
+        # do not attach broadcastable dimension to mask as in forward and
+        # viterbi computations
+        sequences.append(mask.dimshuffle(1, 0)[1:])
 
     # sum out all possibilities of y_0
     # assumes that:
