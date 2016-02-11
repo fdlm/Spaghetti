@@ -2,8 +2,8 @@
 Layers that construct global connections using Conditional Random Fields.
 Similar to recurrent layers, CRF layers expect the input shape to be
 ``(batch_size, sequence_length, num_inputs)``. The input is allowed to have
-more than three dimensions in which case dimensions trailing the third dimension
-are flattened.
+more than three dimensions in which case dimensions trailing the third
+dimension are flattened.
 """
 import lasagne as lnn
 import theano
@@ -48,7 +48,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         # The shape of the input to this layer will be the first element
         # of input_shapes, whether or not a mask input is being used.
         input_shape = input_shapes[0]
-        return input_shape[0], input_shape[1]
+        return input_shape[0], input_shape[1], self.num_states
 
     def _get_viterbi_output_for(self, sequences, num_batches):
 
@@ -103,7 +103,8 @@ class CrfLayer(lnn.layers.MergeLayer):
         # y_star is the most probable state sequence
         y_star, _ = theano.scan(
             fn=bcktr_step,
-            outputs_info=tt.cast(deltas_N.argmax(axis=1), dtype=STATE_ID_DTYPE),
+            outputs_info=tt.cast(deltas_N.argmax(axis=1),
+                                 dtype=STATE_ID_DTYPE),
             sequences=back_ptrs[1:],  # don't report the initial state y_0
             non_sequences=[num_batches],
             go_backwards=True,
@@ -113,7 +114,15 @@ class CrfLayer(lnn.layers.MergeLayer):
         y_star = tt.concatenate([y_star[::-1],
                                  tt.shape_padleft(deltas[-1].argmax(axis=1))
                                  ]).T
-        return y_star
+
+        # create one-hot encoding of state sequence. since theano's
+        # "to_one_hot" function only takes vectors and converts them to
+        # matrices, we have reshape forth and back
+        y_star_oh = tt.extra_ops.to_one_hot(
+            y_star.flatten(),
+            self.num_states).reshape((num_batches, -1, self.num_states))
+
+        return y_star_oh
 
     def _get_forward_output_for(self, sequences, num_batches):
 
