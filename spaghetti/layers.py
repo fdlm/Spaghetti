@@ -55,7 +55,8 @@ class CrfLayer(lnn.layers.MergeLayer):
         def vit_step(x_i, delta_p, A, W, c):
             all_trans = A + tt.shape_padright(delta_p)
             best_trans = tt.max(all_trans, axis=1)
-            best_trans_id = tt.argmax(all_trans, axis=1)
+            best_trans_id = tt.cast(tt.argmax(all_trans, axis=1),
+                                    dtype=STATE_ID_DTYPE)
             return c.T + x_i.dot(W) + best_trans, best_trans_id
 
         def vit_step_masked(x_i, mask_i, delta_p, A, W, c, masked_bck_ptrs):
