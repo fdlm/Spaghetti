@@ -1,9 +1,19 @@
+# -*- coding: utf-8 -*-
 """
-Layers that construct global connections using Conditional Random Fields.
-Similar to recurrent layers, CRF layers expect the input shape to be
+Layers that construct linear-chain conditional random fields (CRFs). Similar to
+Lasagne's recurrent layers, CRF layers expect the input shape to be
 ``(batch_size, sequence_length, num_inputs)``. The input is allowed to have
 more than three dimensions in which case dimensions trailing the third
-dimension are flattened.
+dimension are flattened. CRF layers can be combined directly with recurrent
+layers and, using reshape operations, with feed-forward layers (see the
+Lasagne docs for recurrent layers).
+
+.. currentmodule:: spaghetti.layers
+
+.. autosummary::
+    :nosignatures:
+
+    CrfLayer
 """
 import lasagne as lnn
 import theano
@@ -16,12 +26,40 @@ STATE_ID_DTYPE = 'uint16'
 # noinspection PyPep8Naming
 class CrfLayer(lnn.layers.MergeLayer):
     """
-    spaghetti.layers.ViterbiLayer(incoming, pi, c, A, W, mask_input=None,
+    spaghetti.layers.ViterbiLayer(incoming, pi, tau, c, A, W, mask_input=None,
     **kwargs)
 
-    Conditional random field layer
+    A layer which implements a linear-chain conditional random field.
 
-    TODO: describe parameters
+    It assumes only pair-wise potentials between labels and pairwise
+    label-input potentials. Different outputs can be computed by
+    passing a `mode` parameter to `get_output`.
+
+    .. math ::
+        P(y \mid x) = \frac{1}{Z(x)}\exp(y_0^T \pi +
+                      \sum_{n=1}^N[y_{n-1}^T A y_n + y_n^T c + x_n^T W y_n] +
+                      y_N^T \tau)
+
+    Parameters
+    ----------
+    incoming : a :class:`lasagne.layers.Layer` instance or a tuple
+        The layer feeding into this layer, or the expected input shape
+    num_states : int16
+        Number of hidden states in the CRF
+    pi : callable, np.ndarray or theano.shared
+        Initializer for the initial potential (:math:`\pi`)
+    tau : callable, np.ndarray or theano.shared
+        Initializer for the final potential (:math:`\tau`)
+    c : callable, np.ndarray or theano.shared
+        Initializer for the label bias potential (:math:`c`)
+    A : callable, np.ndarray or theano.shared
+        Initializer for the pairwise label potential (:math:`A`)
+    W : callable, np.ndarray or theano.shared
+        Initializer for the pairwise label-input potential (:math:`W`)
+    mask_input : :class:`lasagne.layers.Layer`
+        Layer which allows for a sequence mask to be input, for when sequences
+        are of variable length.  Default `None`, which means no mask will be
+        supplied (i.e. all sequences are of the same length).
     """
 
     def __init__(self, incoming, num_states, pi=lnn.init.Constant(0.),
@@ -45,6 +83,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         self.W = self.add_param(W, (num_inputs, num_states), name='W')
 
     def get_output_shape_for(self, input_shapes):
+        # TODO: check how this works if we want to have a 'partition' output
         # The shape of the input to this layer will be the first element
         # of input_shapes, whether or not a mask input is being used.
         input_shape = input_shapes[0]
@@ -171,6 +210,38 @@ class CrfLayer(lnn.layers.MergeLayer):
         return alphas, log_z
 
     def get_output_for(self, inputs, mode='viterbi', **kwargs):
+        """
+        Compute this layer's output function given a symbolic input variable.
+
+        Parameters
+        ----------
+        inputs : list of theano.TensorType
+            `inputs[0]` should always be the symbolic input variable.  When
+            this layer has a mask input (i.e. was instantiated with
+            `mask_input != None`, indicating that the lengths of sequences in
+            each batch vary), `inputs` should have length 2, where `inputs[1]`
+            is the `mask`.  The `mask` should be supplied as a Theano variable
+            denoting whether each time step in each sequence in the batch is
+            part of the sequence or not.  `mask` should be a matrix of shape
+            ``(n_batch, n_time_steps)`` where ``mask[i, j] = 1`` when ``j <=
+            (length of sequence i)`` and ``mask[i, j] = 0`` when ``j > (length
+            of sequence i)``. When the hidden state of this layer is to be
+            pre-filled (i.e. was set to a :class:`Layer` instance) `inputs`
+            should have length at least 2, and `inputs[-1]` is the hidden state
+            to prefill with.
+
+        mode : string
+            Indicates the type of the output of the layer. If 'viterbi',
+            the globally optimal state sequence for each input sequence is
+            returned, using one-hot encoding. If 'forward', the filtering
+            distribution :math:`P(y_t | x_{1:t})` is returned. If 'partition',
+            the partition function :math:`Z(X)` is returned.
+
+        Returns
+        -------
+        layer_output : theano.TensorType
+            Symbolic output variable.
+        """
         # Retrieve the layer input
         data = inputs[0]
         # Treat all dimensions after the second as flattened feature dimensions

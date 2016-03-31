@@ -3,10 +3,9 @@ from setuptools import setup
 setup(
     name='Spaghetti',
     version='0.0.1',
-    packages=['spaghetti'],
-    url='',
-    license='',
+    description='A Lasagne-compatible conditional random field implementation',
+    license='MIT',
     author='Filip Korzeniowski',
     author_email='filip.korzeniowski@jku.at',
-    description='', requires=['numpy', 'Lasagne', 'Theano']
+    install_requires=['numpy', 'Lasagne', 'Theano']
 )
