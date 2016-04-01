@@ -1,3 +1,12 @@
+"""
+Provides objective functions for training CRF layers. Currently, only
+one objective is implemented:
+
+.. autosummary::
+    :nosignatures:
+
+    neg_log_likelihood
+"""
 import theano
 import theano.tensor as tt
 import lasagne as lnn
@@ -35,6 +44,30 @@ def _log_sum_exp(x=None, axis=None):
 
 
 def neg_log_likelihood(crf, target, mask=None):
+    """
+    Computes the negative log-likelihood of the target sequences
+    given the inputs.
+
+    .. math:: L = - P(t | x)
+
+    Parameters
+    ----------
+    crf : :class:`CrfLayer` instance
+        CRF layer to compute the negative log-likelihood for
+    target : Theano 3D tensor
+        One-hot encoded target sequences
+    mask : Theano 2D tensor
+        Matrix indicating for each sequence which elements are used (value 1)
+        and which ignored (value 0). Default `None`, which means no mask
+        will be used and thus all elements of all sequences used (i.e. all
+        sequences are of the same length)
+
+    Returns
+    -------
+    Theano scalar
+        An expression for the negative log-likelihood
+    """
+
     # get output and compute partition function
     x = lnn.layers.get_output(crf.input_layers[0])
     log_z = lnn.layers.get_output(crf, mode='partition')

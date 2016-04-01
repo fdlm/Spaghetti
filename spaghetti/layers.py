@@ -23,7 +23,6 @@ import numpy as np
 STATE_ID_DTYPE = 'uint16'
 
 
-# noinspection PyPep8Naming
 class CrfLayer(lnn.layers.MergeLayer):
     """
     spaghetti.layers.ViterbiLayer(incoming, pi, tau, c, A, W, mask_input=None,
@@ -209,7 +208,7 @@ class CrfLayer(lnn.layers.MergeLayer):
         alphas = alphas.dimshuffle(1, 0, 2)
         return alphas, log_z
 
-    def get_output_for(self, inputs, mode='viterbi', **kwargs):
+    def get_output_for(self, inputs, mode='decoding', **kwargs):
         """
         Compute this layer's output function given a symbolic input variable.
 
@@ -231,9 +230,9 @@ class CrfLayer(lnn.layers.MergeLayer):
             to prefill with.
 
         mode : string
-            Indicates the type of the output of the layer. If 'viterbi',
+            Indicates the type of the output of the layer. If 'decoding',
             the globally optimal state sequence for each input sequence is
-            returned, using one-hot encoding. If 'forward', the filtering
+            returned, using one-hot encoding. If 'filtering', the filtering
             distribution :math:`P(y_t | x_{1:t})` is returned. If 'partition',
             the partition function :math:`Z(X)` is returned.
 
@@ -260,9 +259,9 @@ class CrfLayer(lnn.layers.MergeLayer):
             mask = mask.dimshuffle(1, 0, 'x')
             sequences.append(mask)
 
-        if mode == 'viterbi':
+        if mode == 'decoding':
             return self._get_viterbi_output_for(sequences, num_batches)
-        elif mode == 'forward':
+        elif mode == 'filtering':
             return self._get_forward_output_for(sequences, num_batches)[0]
         elif mode == 'partition':
             return self._get_forward_output_for(sequences, num_batches)[1]
