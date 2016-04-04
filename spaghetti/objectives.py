@@ -17,12 +17,14 @@ def _log_sum_exp(x=None, axis=None):
     """
     A numerically stable expression for
     `T.log(T.exp(x).sum(axis=axis))`
+
     Parameters
     ----------
     x : theano.gof.Variable
         A tensor we want to compute the log sum exp of
     axis : int, optional
         Axis along which to sum
+
     Returns
     -------
     log_sum_exp : theano.gof.Variable
