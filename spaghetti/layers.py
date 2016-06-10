@@ -266,4 +266,4 @@ class CrfLayer(lnn.layers.MergeLayer):
         elif mode == 'partition':
             return self._get_forward_output_for(sequences, num_batches)[1]
         else:
-            raise NotImplementedError('Invalid mode "%s"'.format(mode))
+            raise NotImplementedError('Invalid mode "{}"'.format(mode))
