@@ -151,7 +151,7 @@ class CrfLayer(lnn.layers.MergeLayer):
 
         # add y_star_N, reverse to bring path in correct order and shape
         y_star = tt.concatenate([y_star[::-1],
-                                 tt.shape_padleft(deltas[-1].argmax(axis=1))
+                                 tt.shape_padleft(deltas_N.argmax(axis=1))
                                  ]).T
 
         # create one-hot encoding of state sequence. since theano's
